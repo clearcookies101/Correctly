@@ -3,17 +3,11 @@ from msal import PublicClientApplication
 
 CLIENT_ID = "92196e36-4333-451f-873e-f6da4df63081"
 TENANT_ID = "70de1992-07c6-480f-a318-a1afcba03983"
-AUTHORITY = f"https://login.microsoftonline.com/common"
+AUTHORITY = f"https://login.microsoftonline.com/consumers"
 SCOPES = ["Files.ReadWrite.All"]
 
 #Creates the MSAL app
-app = PublicClientApplication(
-    "92196e36-4333-451f-873e-f6da4df63081",
-    authority="https://login.microsoftonline.com/common"
-)
-
-flow = app.initiate_device_flow(scopes=["Files.ReadWrite.All", "User.Read"])
-print(flow)
+app = PublicClientApplication(CLIENT_ID, authority=AUTHORITY)
 headers = None
 #Acquires token
 result = None
