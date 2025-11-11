@@ -26,12 +26,12 @@ try:
     else:
         flow = app.initiate_device_flow(scopes=SCOPES)
         if "user_code" not in flow:
-            print("Can't start device flow. Check your client ID and tenant ID.")
+            print("Device flow failed. Exiting.")
         else:
             print(flow["message"])
             result = app.acquire_token_by_device_flow(flow)
 except Exception as e:
-    print("An error occurred during authentication:", str(e))
+    print("An error occurred during authentication. Exiting.")
     result = None
 
 if not result or "access_token" not in result:
@@ -60,7 +60,7 @@ if headers:
             with open(filename, "wb") as f:
                 f.write(response.content)
 
-            print(f"Downloaded {filename} successfully.\n")
+            print(f"Downloaded file successfully.\n")
 
             #Read document
             doc = Document(filename)
@@ -85,10 +85,10 @@ if headers:
                 uploadResponse = requests.put(uploadUrl, headers=headers, data=f)
 
             if uploadResponse.status_code in (200, 201):
-                print(f"Uploaded {filename} successfully.")
+                print(f"Uploaded file successfully.")
             else:
-                print("Upload failed:", uploadResponse.text)
+                print("Upload failed.")
         else:
-            print("No recent Word files found.")
+            print("Failed to find Word file.")
     else:
-        print("No headers available for requests.")
+        print("No headers available.")
