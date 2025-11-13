@@ -4,8 +4,16 @@ import language_tool_python
 from docx import Document
 import re
 import docx2txt
+import subprocess
+import os
 
 def levenshteinCorrection(str1, str2):
+    #To prevent issues with empty strings
+    if not str1:
+        return len(str2)
+    if not str2:
+        return len(str1)
+
     strlen1 = len(str1)
     strlen2 = len(str2)
 
@@ -71,18 +79,16 @@ else:
     headers = {'Authorization': f'Bearer {accessToken}'}
 
     #Get most recent Word doc
-    response = requests.get(
-    "https://graph.microsoft.com/v1.0/me/drive/recent",
-    headers=headers
-)
+    response = requests.get("https://graph.microsoft.com/v1.0/me/drive/root/children?$orderby=lastModifiedDateTime desc", headers=headers)
+
 
 if not response.ok:
-    print("Error retrieving recent files:", response.status_code, response.text)
+    print("Retrieving recent files failed. Exiting.")
     exit()
 
 recentFiles = response.json()
 
-#Filter for .docx
+#Filter for doc
 wordFiles = [f for f in recentFiles.get("value", []) if f["name"].lower().endswith(".docx")]
 
 if not wordFiles:
@@ -95,7 +101,7 @@ print(f"Working on most recent document: {docItem['name']}")
 # Download the file
 metadataUrl = f"https://graph.microsoft.com/v1.0/me/drive/items/{docItem['id']}"
 metadataResponse = requests.get(metadataUrl, headers=headers)
-
+requests.patch(metadataUrl, headers=headers)
 if not metadataResponse.ok:
     print("Error fetching metadata. Exiting.")
     exit()
@@ -114,30 +120,50 @@ print(f"File download success.\n")
 #Read document
 doc = Document(filename)
 #Extract text from document and test
-text = docx2txt.process(filename)
+text = docx2txt.process(filename).strip()
 print(text)
 
 #Actual modification of the file the grammar check
 words = tool.check(text)
-print(f"{len(words)} are mispelled.")
+typos = [w for w in words if w.ruleIssueType == 'misspelling']
+print(f"{len(typos)} are mispelled.")
 for mistake in words:
-    if mistake.replacements:
-        incorrectWord=mistake.context[mistake.offset:mistake.offset + mistake.errorLength]
-        suggestion=mistake.replacements[0]
-        dist=levenshteinCorrection(incorrectWord, suggestion)
-        #For testing
+    if mistake.ruleIssueType != 'misspelling':
+        continue  # Only misspellings
+    if not mistake.replacements:
+        continue  # When no suggestions are available
+
+    incorrectWord = mistake.context[mistake.offset:mistake.offset + mistake.errorLength].strip()
+    suggestion = mistake.replacements[0].strip() if mistake.replacements else "None"
+
+    if not incorrectWord or not suggestion or suggestion == "None":
+        continue  # Skip if either is empty
+    try:
+        dist = levenshteinCorrection(incorrectWord, suggestion)
+    except Exception:
+        print(f"Levenshtein calculation failed. Skipping word {incorrectWord}.")
+        continue
+    #For testing
+    if dist is not None:
         print(f"Incorrect word: {incorrectWord}, Suggestion: {suggestion}, Distance: {dist}")
-        if dist <= 3: #Only highlight and replace if its likely to be a typo due to its small distance
-            for paragraph in doc.paragraphs:
-                if incorrectWord in paragraph.text:
-                    for run in paragraph.runs:
-                        if incorrectWord in run.text:
-                            run.font.highlight_color = 6
-                            doc.add_paragraph(f"Suggestion for'{incorrectWord}': '{suggestion}'")
-                                 #   run.text = run.text.replace(incorrectWord, suggestion
+    if dist <=3: #Only highlight and replace if its likely to be a typo due to its small distance
+        for paragraph in doc.paragraphs:
+            messageText = ''.join(run.text for run in paragraph.runs)
+            if incorrectWord in paragraph.text:
+                messageText = messageText.replace(incorrectWord, suggestion)
+                for run in paragraph.runs:
+                    run.text = ''
+                    if incorrectWord in run.text:
+                        run.font.highlight_color = 6
+                        #paragraph.runs[0].text = messageText
+                        run.text = run.text.replace(incorrectWord, suggestion)
 #Save modified doc
 altFilename = f"corrected {filename}"
 doc.save(altFilename)
+windowsPath = subprocess.check_output(["wslpath", "-w", os.path.abspath(altFilename)]).decode().strip()
+#Open the modified document
+subprocess.run(["explorer.exe", windowsPath])
+print(f"Saved the new document as {altFilename}.")
 #Upload modified file back to OneDrive
 uploadUrl = f"https://graph.microsoft.com/v1.0/me/drive/items/{docItem['id']}/content"
 with open(filename, "rb") as f:
