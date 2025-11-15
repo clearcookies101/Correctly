@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Word documents (do NOT push personal docs)
+*.docx
+
+# LanguageTool downloads
+LanguageTool/
+language_tool_python/
+tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
