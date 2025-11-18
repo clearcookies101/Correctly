@@ -13,13 +13,12 @@ SCOPES = ["Files.ReadWrite.All"]
 #For detection
 tool = language_tool_python.LanguageTool('en-US')
 
-
 #Creates MSAL app
 app = PublicClientApplication(CLIENT_ID, authority=AUTHORITY)
 headers = None
 
 def authenticate():
-    """Authenticate user with Microsoft OAuth device flow."""
+    #Authenticate user with Microsoft OAuth device flow.
     global headers
 
     accounts = app.get_accounts()
@@ -30,7 +29,7 @@ def authenticate():
         if "user_code" not in flow:
             return "Device flow failed."
 
-        print(flow["message"])  # Will also show in terminal
+        print(flow["message"])
         result = app.acquire_token_by_device_flow(flow)
 
     if not result or "access_token" not in result:
@@ -40,95 +39,120 @@ def authenticate():
     return "Authentication successful."
 
 def get_latest_word_file():
-    """Gets the most recent .docx file from OneDrive."""
+    #Gets the most recent .docx file from OneDrive.
     global headers
 
+    #Get most recent Word doc
     url = "https://graph.microsoft.com/v1.0/me/drive/root/children?$orderby=lastModifiedDateTime desc"
     response = requests.get(url, headers=headers)
 
     if not response.ok:
+        print("Retrieving recent files failed. Exiting.")
         return None, "Failed to retrieve recent files."
 
     files = response.json().get("value", [])
     word_files = [f for f in files if f["name"].lower().endswith(".docx")]
 
     if not word_files:
+        print("No Word files found in recent documents.")
         return None, "No .docx files found."
 
-    return word_files[0], "Found latest Word document."
+    #Pick the most recent Word doc
+    docItem = word_files[0]
+    print(f"Working on most recent document: {docItem['name']}")
+    return docItem, "Found latest Word document."
 
 def download_file(docItem):
-    """Downloads the Word document."""
+    # Download the Word document
     metadataUrl = f"https://graph.microsoft.com/v1.0/me/drive/items/{docItem['id']}"
-    metadata = requests.get(metadataUrl, headers=headers).json()
+    metadataResponse = requests.get(metadataUrl, headers=headers)
+    requests.patch(metadataUrl, headers=headers)
+    if not metadataResponse.ok:
+        print("Error fetching metadata. Exiting.")
+        return None, "Download failed."
+
+    metadata = metadataResponse.json()
     downloadUrl = metadata["@microsoft.graph.downloadUrl"]
 
-    response = requests.get(downloadUrl)
-
+    fileResponse = requests.get(downloadUrl)
     filename = docItem["name"]
-    with open(filename, "wb") as f:
-        f.write(response.content)
+    if not fileResponse.ok:
+        print(f"Download failed.")
+        return None, "Download failed."
 
+    with open(filename, "wb") as f:
+        f.write(fileResponse.content)
+    print(f"File download success.\n")
     return filename, "Download complete."
 
 def correct_document(filename):
-    """Correct grammar and return corrected file name."""
+    #Actual modification of the file the grammar check
     doc = Document(filename)
+    #Extract text from document and test
     text = docx2txt.process(filename).strip()
+    print(text)
+
+    #For detection
     words = tool.check(text)
+    typos = [w for w in words if w.ruleIssueType == 'misspelling']
+    print(f"{len(typos)} are mispelled.")
 
     for mistake in words:
+        #Reseting the variables
+        incorrectWord = None
+        suggestion = None
+        dist = None
         if mistake.ruleIssueType != 'misspelling':
-            continue
+            continue  # Only misspellings
         if not mistake.replacements:
+            continue  # When no suggestions are available
+
+        incorrectWord = mistake.context[mistake.offset:mistake.offset + mistake.errorLength].strip()
+        suggestion = mistake.replacements[0].strip() if mistake.replacements else "None"
+
+        if not incorrectWord or not suggestion or suggestion == "None":
+            continue  # Skip if either is empty
+        try:
+            dist = levenshteinCorrection(incorrectWord, suggestion)
+        except Exception:
+            print(f"Levenshtein calculation failed. Skipping word {incorrectWord}.")
             continue
-
-        incorrect = mistake.context[mistake.offset:mistake.offset + mistake.errorLength]
-        suggestion = mistake.replacements[0]
-
-        if incorrect and suggestion:
+        #For testing
+        if dist is not None:
+            print(f"Incorrect word: {incorrectWord}, Suggestion: {suggestion}, Distance: {dist}")
+        if dist <=3: #Only highlight and replace if its likely to be a typo due to its small distance
             for paragraph in doc.paragraphs:
-                if incorrect in paragraph.text:
+                messageText = ''.join(run.text for run in paragraph.runs)
+                if incorrectWord in paragraph.text:
+                    messageText = messageText.replace(incorrectWord, suggestion)
                     for run in paragraph.runs:
-                        run.text = run.text.replace(incorrect, suggestion)
+                        run.text = ''
+                        if incorrectWord in run.text:
+                            run.font.highlight_color = 6
+                            run.text = run.text.replace(incorrectWord, suggestion)
 
-    new_filename = f"corrected_{filename}"
-    doc.save(new_filename)
-    return new_filename, "Correction complete."
+    #Save modified doc
+    altFilename = f"Corrected {filename}"
+    doc.save(altFilename)
+    return altFilename, "Correction complete."
 
 def upload_corrected(docItem, corrected_filename):
-    """Uploads corrected file back to OneDrive."""
+    #Upload modified file back to OneDrive
     uploadUrl = f"https://graph.microsoft.com/v1.0/me/drive/items/{docItem['id']}/content"
 
     with open(corrected_filename, "rb") as f:
-        response = requests.put(uploadUrl, headers=headers, data=f)
+        uploadResponse = requests.put(uploadUrl, headers=headers, data=f)
 
-    if response.status_code in [200, 201]:
+    if uploadResponse.status_code in [200, 201]:
+        print(f"Uploaded file successfully.")
         return "Upload successful."
     else:
+        print("Upload failed.")
         return "Upload failed."
 
-def levenshteinCorrection(str1, str2):
-    strlen1 = len(str1)
-    strlen2 = len(str2)
-
-    if strlen1 < strlen2:
-        str1, str2 = str2, str1
-
-    if len(str2) == 0:
-        return len(str1)
-
-    prevRow = range(len(str2) + 1)
-    for i in range(strlen1):
-        char1 = str1[i]
-        currRow = [i + 1]
-        for j in range(strlen2):
-            char2 = str2[j]
-            inserts = prevRow[j + 1] + 1
-            deletes = currRow[j] + 1
-            subs = prevRow[j] + (char1 != char2)
-            currRow.append(min(inserts, deletes, subs))
-        prevRow = currRow
-
-    return currRow[-1]
-
+def open_file_windows(filename):
+    #Convert path to Windows format for WSL
+    windowsPath = subprocess.check_output(["wslpath", "-w", os.path.abspath(filename)]).decode().strip()
+    #Open the modified document
+    subprocess.run(["explorer.exe", windowsPath])
+    print(f"Saved the new document as {filename}.")
