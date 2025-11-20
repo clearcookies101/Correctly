@@ -4,6 +4,9 @@ from docx import Document
 import requests
 import docx2txt
 import os
+import subprocess
+import sys
+from docx.enum.text import WD_COLOR_INDEX
 
 CLIENT_ID = "92196e36-4333-451f-873e-f6da4df63081"
 TENANT_ID = "70de1992-07c6-480f-a318-a1afcba03983"
@@ -43,14 +46,14 @@ def get_latest_word_file():
     global headers
 
     #Get most recent Word doc
-    url = "https://graph.microsoft.com/v1.0/me/drive/root/children?$orderby=lastModifiedDateTime desc"
+    url = "https://graph.microsoft.com/v1.0/me/drive/root/search(q='.docx')?$orderby=lastModifiedDateTime desc"
     response = requests.get(url, headers=headers)
 
     if not response.ok:
         print("Retrieving recent files failed. Exiting.")
         return None, "Failed to retrieve recent files."
-
-    files = response.json().get("value", [])
+    #filter out folders
+    files = [f for f in files if f.get("file")]  #
     word_files = [f for f in files if f["name"].lower().endswith(".docx")]
 
     if not word_files:
@@ -95,6 +98,7 @@ def correct_document(filename):
     #For detection
     words = tool.check(text)
     typos = [w for w in words if w.ruleIssueType == 'misspelling']
+    changes = []
     print(f"{len(typos)} are mispelled.")
 
     for mistake in words:
@@ -124,12 +128,18 @@ def correct_document(filename):
             for paragraph in doc.paragraphs:
                 messageText = ''.join(run.text for run in paragraph.runs)
                 if incorrectWord in paragraph.text:
-                    messageText = messageText.replace(incorrectWord, suggestion)
+                    #messageText = messageText.replace(incorrectWord, suggestion)
                     for run in paragraph.runs:
-                        run.text = ''
                         if incorrectWord in run.text:
-                            run.font.highlight_color = 6
+                            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
                             run.text = run.text.replace(incorrectWord, suggestion)
+                            changes.append((incorrectWord, suggestion))
+    if changes:
+        print("Changes that would be made:")
+        for old, new in changes:
+            print(f"{old} -> {new}")
+    else:
+        print("No changes would be made.")                 
 
     #Save modified doc
     altFilename = f"Corrected {filename}"
@@ -138,7 +148,7 @@ def correct_document(filename):
 
 def upload_corrected(docItem, corrected_filename):
     #Upload modified file back to OneDrive
-    uploadUrl = f"https://graph.microsoft.com/v1.0/me/drive/items/{docItem['id']}/content"
+    uploadUrl = f"https://graph.microsoft.com/v1.0/me/drive/root:/{corrected_filename}:/content"
 
     with open(corrected_filename, "rb") as f:
         uploadResponse = requests.put(uploadUrl, headers=headers, data=f)
@@ -151,8 +161,24 @@ def upload_corrected(docItem, corrected_filename):
         return "Upload failed."
 
 def open_file_windows(filename):
-    #Convert path to Windows format for WSL
-    windowsPath = subprocess.check_output(["wslpath", "-w", os.path.abspath(filename)]).decode().strip()
-    #Open the modified document
-    subprocess.run(["explorer.exe", windowsPath])
-    print(f"Saved the new document as {filename}.")
+    #Convert to absolute path
+    path = os.path.abspath(filename)
+
+    #WSL
+    if "microsoft" in os.uname().release.lower():
+        win_path = subprocess.check_output(["wslpath", "-w", path]).decode().strip()
+        os.system(f'explorer.exe "{win_path}"')
+        return
+
+    #Windows
+    if os.name == "nt":
+        os.startfile(path)
+        return
+
+    #macOS
+    if sys.platform == "darwin":
+        subprocess.call(["open", path])
+        return
+
+    #Linux
+    subprocess.call(["xdg-open", path])
