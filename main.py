@@ -42,25 +42,31 @@ def authenticate():
     return "Authentication successful."
 
 def get_latest_word_file():
-    #Gets the most recent .docx file from OneDrive.
     global headers
 
-    #Get most recent Word doc
     url = "https://graph.microsoft.com/v1.0/me/drive/root/search(q='.docx')?$orderby=lastModifiedDateTime desc"
     response = requests.get(url, headers=headers)
 
     if not response.ok:
         print("Retrieving recent files failed. Exiting.")
         return None, "Failed to retrieve recent files."
-    #filter out folders
-    files = [f for f in files if f.get("file")]  #
+
+    data = response.json()
+
+    # Extract items properly
+    files = data.get("value", [])
+
+    # Filter out folders
+    files = [f for f in files if f.get("file")]
+
+    # Keep only .docx files
     word_files = [f for f in files if f["name"].lower().endswith(".docx")]
 
     if not word_files:
         print("No Word files found in recent documents.")
         return None, "No .docx files found."
 
-    #Pick the most recent Word doc
+    # Most recent file (already sorted by API)
     docItem = word_files[0]
     print(f"Working on most recent document: {docItem['name']}")
     return docItem, "Found latest Word document."
