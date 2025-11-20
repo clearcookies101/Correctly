@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import scrolledtext
-from main import authenticate, get_latest_word_file, download_file, correct_document, upload_corrected
+from main import authenticate, get_latest_word_file, download_file, correct_document, upload_corrected, open_file_windows
 import os
 
 corrected_file_path = None
@@ -44,7 +44,7 @@ def do_start():
 
 def open_corrected_file():
     if corrected_file_path and os.path.exists(corrected_file_path):
-        os.startfile(corrected_file_path)
+        open_file_windows(corrected_file_path)
         log("Opened corrected file.")
     else:
         log("Corrected file not found. Please run the correction process first.")
